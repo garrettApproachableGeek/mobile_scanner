@@ -60,6 +60,8 @@ public class MobileScanner: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private var imagesCurrentlyBeingProcessed = false
     
     public var timeoutSeconds: Double = 0
+    
+    public var lastCaptureInverted: Bool = false
 
     init(registry: FlutterTextureRegistry?, mobileScannerCallback: @escaping MobileScannerCallback, torchModeChangeCallback: @escaping TorchModeChangeCallback, zoomScaleChangeCallback: @escaping ZoomScaleChangeCallback) {
         self.registry = registry
@@ -124,6 +126,24 @@ public class MobileScanner: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         AVCaptureDevice.requestAccess(for: .video, completionHandler: { result($0) })
     }
     
+    func convertCIImageToCGImage(inputImage: CIImage) -> CGImage? {
+        let context = CIContext(options: nil)
+        if let cgImage = context.createCGImage(inputImage, from: inputImage.extent) {
+            return cgImage
+        }
+        return nil
+    }
+    
+    func invertImage(image: UIImage) -> UIImage {
+        let ciImage = CIImage(image: image)
+        let filter = CIFilter(name: "CIColorInvert")
+        filter?.setValue(ciImage, forKey: kCIInputImageKey)
+        let outputImage = filter?.outputImage
+        let cgImage = convertCIImageToCGImage(inputImage: outputImage!)
+
+        return UIImage(cgImage: cgImage!, scale: image.scale, orientation: image.imageOrientation)
+    }
+    
     /// Gets called when a new image is added to the buffer
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -141,7 +161,14 @@ public class MobileScanner: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             nextScanTime = currentTime + timeoutSeconds
             imagesCurrentlyBeingProcessed = true
             
-            let ciImage = latestBuffer.image
+            var ciImage: UIImage
+            if (lastCaptureInverted == false) {
+                ciImage = self.invertImage(image: latestBuffer.image)
+                lastCaptureInverted = true
+            } else {
+                ciImage = latestBuffer.image
+                lastCaptureInverted = false
+            }
 
             let image = VisionImage(image: ciImage)
             image.orientation = imageOrientation(

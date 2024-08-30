@@ -37,6 +37,8 @@ import dev.steenbakker.mobile_scanner.utils.YuvToRgbConverter
 import io.flutter.view.TextureRegistry
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
+import android.graphics.ImageFormat
+import android.graphics.Color
 
 class MobileScanner(
     private val activity: Activity,
@@ -55,7 +57,8 @@ class MobileScanner(
     private var lastScanned: List<String?>? = null
     private var scannerTimeout = false
     private var displayListener: DisplayManager.DisplayListener? = null
-
+    private var lastCaptureInverted: Boolean = false
+    
     /// Configurable variables
     var scanWindow: List<Float>? = null
     private var detectionSpeed: DetectionSpeed = DetectionSpeed.NO_DUPLICATES
@@ -77,7 +80,16 @@ class MobileScanner(
     @ExperimentalGetImage
     val captureOutput = ImageAnalysis.Analyzer { imageProxy -> // YUV_420_888 format
         val mediaImage = imageProxy.image ?: return@Analyzer
-        val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+
+        var inputImage: InputImage? = null
+        if (lastCaptureInverted == false) {
+            val invertedImage: Bitmap = invertImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            inputImage = InputImage.fromBitmap(invertedImage, 0)
+            lastCaptureInverted = true
+        } else {
+            inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            lastCaptureInverted = false
+        }
 
         if (detectionSpeed == DetectionSpeed.NORMAL && scannerTimeout) {
             imageProxy.close()
@@ -87,7 +99,7 @@ class MobileScanner(
         }
 
         scanner?.let {
-            it.process(inputImage).addOnSuccessListener { barcodes ->
+            it.process(inputImage!!).addOnSuccessListener { barcodes ->
                 if (detectionSpeed == DetectionSpeed.NO_DUPLICATES) {
                     val newScannedBarcodes = barcodes.mapNotNull {
                         barcode -> barcode.rawValue
@@ -163,6 +175,25 @@ class MobileScanner(
             }, detectionTimeout)
         }
     }
+
+	private fun invertImage(mediaImage: android.media.Image, rotationDegrees: Int): Bitmap {
+		val bitmap = Bitmap.createBitmap(mediaImage.width, mediaImage.height, Bitmap.Config.ARGB_8888)
+		val converter = YuvToRgbConverter(activity.applicationContext)
+		converter.yuvToRgb(mediaImage, bitmap)
+
+		for (y in 0 until bitmap.height) {
+			for (x in 0 until bitmap.width) {
+				val pixel = bitmap.getPixel(x, y)
+				val red = 255 - Color.red(pixel)
+				val green = 255 - Color.green(pixel)
+				val blue = 255 - Color.blue(pixel)
+				val invertedPixel = Color.rgb(red, green, blue)
+				bitmap.setPixel(x, y, invertedPixel)
+			}
+		}
+
+		return rotateBitmap(bitmap, rotationDegrees.toFloat())
+	}
 
     private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
         val matrix = Matrix()
